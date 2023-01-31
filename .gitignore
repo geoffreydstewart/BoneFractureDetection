@@ -1,3 +1,15 @@
+# OSX noise
+.DS_Store
+
+# IntelliJ Idea noise
+.idea
+*.iws
+*.ipr
+*.iml
+
+# TensorFlow artifacts
+checkpoints
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
