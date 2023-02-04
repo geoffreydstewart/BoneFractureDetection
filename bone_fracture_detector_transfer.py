@@ -1,22 +1,19 @@
 #!/usr/bin/env python3
 
-
 """
-This is an executable python3 script which can detect the state of a bone from an x-ray. It is currently capable of
-detecting either a 'normal' state, or fracture state.
+This is an executable python3 script which is capable of detecting the state of a humerus or femur bone from an
+x-ray, either a 'normal' state, or fracture state. Transfer learning with fine-tuning is used leveraging a
+DenseNet121 architecture loading weights pretrained on ImageNet. This approach proves to be very effective on
+the tiny dataset under study.
 """
-
 
 import matplotlib.pyplot as plt
-import numpy as np
 from optparse import OptionParser
 import os
 from pathlib import Path
 import tensorflow as tf
-
 from tensorflow import keras
 from tensorflow.keras import layers
-from tensorflow.keras.models import Sequential
 
 
 class ValidationException(Exception):
@@ -38,27 +35,21 @@ PREDICT_OP = "detect"
 
 VALID_OPERATIONS = [TRAIN_OP, PREDICT_OP]
 
-# TODO: changes
-IMG_HEIGHT = 200
-# IMG_WIDTH = 75
-IMG_WIDTH = 200
+IMG_HEIGHT = 150
+IMG_WIDTH = 150
 
 CHECKPOINT_FILENAMES = 'bonestatemodel.ckpt'
-CHECKPOINT_DIRNAME = 'checkpoints'
+CHECKPOINT_DIRNAME = 'checkpoints_transfer'
 CHECKPOINT_PATH = '%s/%s' % (CHECKPOINT_DIRNAME, CHECKPOINT_FILENAMES)
 
 
 def train(options) -> None:
-    # TODO: changes
-    # batch_size = 8
-    batch_size = 64
+    batch_size = 6
 
     data_dir = Path(options.input)
 
     train_ds = tf.keras.utils.image_dataset_from_directory(
         data_dir,
-        # TODO: changes
-        # color_mode='grayscale',
         validation_split=0.2,
         subset="training",
         seed=123,
@@ -67,8 +58,6 @@ def train(options) -> None:
 
     val_ds = tf.keras.utils.image_dataset_from_directory(
         data_dir,
-        # TODO: changes
-        # color_mode='grayscale',
         validation_split=0.2,
         subset="validation",
         seed=123,
@@ -84,28 +73,42 @@ def train(options) -> None:
         print(labels_batch.shape)
         break
 
-    model = create_model()
+    model, base_model = create_model()
 
-    # Create a callback that saves the model's weights
-    # cp_callback = tf.keras.callbacks.ModelCheckpoint(filepath=CHECKPOINT_PATH,
-    #                                                  save_weights_only=True,
-    #                                                  verbose=1)
+    training_epochs = 25
 
-    # TODO: changes
-    # epochs = 25
-    epochs = 4
-    # history = model.fit(train_ds, validation_data=val_ds, epochs=epochs, callbacks=[cp_callback])
-    history = model.fit(train_ds, validation_data=val_ds, epochs=epochs)
+    # this trains the top layer added on top of the base model which currently has its layers frozen
+    model.fit(train_ds, validation_data=val_ds, epochs=training_epochs)
 
+    # fine tune the entire model
+    # Unfreeze the base_model. Note that it keeps running in inference mode since we passed `training=False` when
+    # calling it, as described in the create_model function. This means that the batchnorm layers will not update
+    # their batch statistics. This prevents the batchnorm layers from undoing all the training done so far.
+    base_model.trainable = True
+    model.summary()
+
+    # Note that a very low learning rate is needed at this step, because a much larger model is being trained now
+    # since the base model's layers have been unfrozen, and a tiny dataset is being used. This avoids overfitting
+    # by preventing large weight updates. The pretrained weights need to be re-adapted in a small, incremental way.
+    model.compile(
+        optimizer=keras.optimizers.Adam(1e-5),
+        loss=keras.losses.BinaryCrossentropy(from_logits=True),
+        metrics=[keras.metrics.BinaryAccuracy()],
+    )
+
+    finetuning_epochs = 10
+    history = model.fit(train_ds, epochs=finetuning_epochs, validation_data=val_ds)
+
+    # Persist the weights to enable the separate detect operation
     model.save_weights(CHECKPOINT_PATH)
 
-    acc = history.history['accuracy']
-    val_acc = history.history['val_accuracy']
+    acc = history.history['binary_accuracy']
+    val_acc = history.history['val_binary_accuracy']
 
     loss = history.history['loss']
     val_loss = history.history['val_loss']
 
-    epochs_range = range(epochs)
+    epochs_range = range(finetuning_epochs)
 
     plt.figure(figsize=(8, 8))
     plt.subplot(1, 2, 1)
@@ -122,7 +125,15 @@ def train(options) -> None:
     plt.show()
 
 
-def create_model() -> keras.Model:
+def create_model() -> (keras.Model, keras.Model):
+    base_model = keras.applications.densenet.DenseNet121(
+        weights='imagenet',  # Load weights pre-trained on ImageNet.
+        input_shape=(IMG_HEIGHT, IMG_WIDTH, 3),
+        include_top=False)  # Do not include the ImageNet classifier at the top.
+
+    base_model.trainable = False
+
+    # data augmentation is needed for the tiny dataset being used
     data_augmentation = keras.Sequential([
         layers.RandomFlip("horizontal",
                           input_shape=(IMG_HEIGHT, IMG_WIDTH, 3)),
@@ -131,28 +142,32 @@ def create_model() -> keras.Model:
         layers.RandomBrightness(0.4)
     ])
 
-    model = Sequential([
-        # TODO: changes
-        # data_augmentation,
-        # layers.Rescaling(1./255),
-        layers.Rescaling(1./255, input_shape=(IMG_HEIGHT, IMG_WIDTH, 3)),
-        layers.Conv2D(16, 3, padding='same', activation='relu'),
-        layers.MaxPooling2D(),
-        layers.Conv2D(32, 3, padding='same', activation='relu'),
-        layers.MaxPooling2D(),
-        layers.Conv2D(64, 3, padding='same', activation='relu'),
-        layers.MaxPooling2D(),
-        layers.Dropout(0.2),
-        layers.Flatten(),
-        layers.Dense(128, activation='relu'),
-        layers.Dense(1, activation='sigmoid')
-    ])
+    # Create new model on top
+    inputs = keras.Input(shape=(150, 150, 3))
+    # Apply the data augmentation
+    x = data_augmentation(inputs)
 
-    model.compile(optimizer='adam',
-                  loss=tf.keras.losses.BinaryCrossentropy(),
-                  metrics=['accuracy'])
+    # performs the required preprocessing of the input to make is usable by the pre-trained DenseNet weights
+    x = keras.applications.densenet.preprocess_input(x)
+    # scale_layer = keras.layers.Rescaling(1./255)
+    # x = scale_layer(x)
+
+    # The base model contains batchnorm layers. We want to keep them in inference mode when we unfreeze the base
+    # model for fine-tuning, so we make sure that the base_model is running in inference mode here
+    x = base_model(x, training=False)
+    x = keras.layers.GlobalAveragePooling2D()(x)
+    x = keras.layers.Dropout(0.2)(x)  # Regularize with dropout
+    outputs = keras.layers.Dense(1)(x)
+    model = keras.Model(inputs, outputs)
+
+    model.compile(optimizer=keras.optimizers.Adam(),
+                  loss=keras.losses.BinaryCrossentropy(from_logits=True),
+                  metrics=[keras.metrics.BinaryAccuracy()])
+
     model.summary()
-    return model
+    # the model is needed by both the train and detect operations, and the base_model is needed for the
+    # fine-tuning step in the training operation
+    return model, base_model
 
 
 def detect(options) -> None:
@@ -164,8 +179,9 @@ def detect(options) -> None:
     if not checkpoints:
         raise ExecutionException('No checkpoint files were found under the %s directory.' % CHECKPOINT_DIRNAME)
 
-    model = create_model()
+    model, base_model = create_model()
 
+    # identify the latest checkpoint and load the persisted weights
     checkpoint_dir = os.path.dirname(CHECKPOINT_PATH)
     latest = tf.train.latest_checkpoint(checkpoint_dir)
     model.load_weights(latest)
@@ -175,7 +191,6 @@ def detect(options) -> None:
         if image_name.startswith('.'):
             continue
         image_path = os.path.join(options.input, image_name)
-        # TODO: changes
         # img = tf.keras.utils.load_img(image_path, target_size=(IMG_HEIGHT, IMG_WIDTH), color_mode='grayscale')
         img = tf.keras.utils.load_img(image_path, target_size=(IMG_HEIGHT, IMG_WIDTH))
         img_array = tf.keras.utils.img_to_array(img)
@@ -184,9 +199,9 @@ def detect(options) -> None:
         prediction = model.predict(img_array)
         print(prediction)
         if prediction[0][0] < 0.5:
-            print('%s is Cat' % image_path)
+            print('%s is Fracture' % image_path)
         else:
-            print('%s is a Dog' % image_path)
+            print('%s is Normal' % image_path)
 
 
 def validate_input():
@@ -233,4 +248,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
