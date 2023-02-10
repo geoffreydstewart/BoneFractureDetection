@@ -2,7 +2,7 @@
 
 """
 This is an executable python3 script which attempts to detect the state of a humerus or femur bone from an x-ray,
-either a 'normal' state, or fracture state. A basic CNN is used,  but is not very effective on the tiny dataset
+either a 'normal' state, or fracture state. A basic CNN is used, but is not very effective on the tiny dataset
 under study.
 """
 
@@ -37,8 +37,8 @@ MEASURE_WITH_KFOLD = 'eval-w-kfold'
 
 VALID_OPERATIONS = [TRAIN_OP, PREDICT_OP, MEASURE_WITH_KFOLD]
 
-IMG_HEIGHT = 200
-IMG_WIDTH = 75
+IMG_HEIGHT = 150
+IMG_WIDTH = 150
 BATCH_SIZE = 6
 
 CHECKPOINT_FILENAMES = 'bonestatemodel.ckpt'
@@ -158,9 +158,9 @@ def detect(options) -> None:
         if image_name.startswith('.'):
             continue
         image_path = os.path.join(options.input, image_name)
-        img = tf.keras.utils.load_img(image_path, target_size=(IMG_HEIGHT, IMG_WIDTH), color_mode='grayscale')
+        img = tf.keras.utils.load_img(image_path, target_size=(IMG_HEIGHT, IMG_WIDTH))
         img_array = tf.keras.utils.img_to_array(img)
-        img_array = tf.expand_dims(img_array, 0)
+        img_array = tf.expand_dims(img_array, 0)  # Create a batch
 
         prediction = model.predict(img_array)
         print(prediction)
