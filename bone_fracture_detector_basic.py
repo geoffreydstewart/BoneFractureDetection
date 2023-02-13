@@ -160,7 +160,7 @@ def detect(options) -> None:
         image_path = os.path.join(options.input, image_name)
         img = tf.keras.utils.load_img(image_path, target_size=(IMG_HEIGHT, IMG_WIDTH))
         img_array = tf.keras.utils.img_to_array(img)
-        img_array = tf.expand_dims(img_array, 0)  # Create a batch
+        img_array = tf.expand_dims(img_array, 0)    # Create a batch
 
         prediction = model.predict(img_array)
         print(prediction)

@@ -22,5 +22,5 @@ python3 bone_fracture_detector_transfer.py train -i /path/to/training/dataset
 
 To use the trained model which loads persisted weights learned through transfer learning, to make predictions on new x-rays, execute the following (note that the directory should directly contain one or more xray images):
 ```
-python3 bone_fracture_detector_transfer.py detect -i /path/to/dataset/predict
+python3 bone_fracture_detector_transfer.py detect -i /path/to/xrays/detect
 ```
