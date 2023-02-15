@@ -24,3 +24,8 @@ To use the trained model which loads persisted weights learned through transfer 
 ```
 python3 bone_fracture_detector_transfer.py detect -i /path/to/xrays/detect
 ```
+
+### References
+The following links have been useful references:
+* https://keras.io/guides/transfer_learning/
+* https://machinelearningmastery.com/evaluate-performance-deep-learning-models-keras/
