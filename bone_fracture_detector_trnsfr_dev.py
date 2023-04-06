@@ -6,9 +6,20 @@ x-ray, either a 'normal' state, or fracture state. Transfer learning with fine-t
 DenseNet121 architecture loading weights pre-trained on ImageNet. This approach proves to be reasonably effective on
 the tiny dataset under study.
 
-First, load a pre-trained DenseNet model and fine tune it on a the MURA dataset
+First, load a pre-trained DenseNet model and train it on a portion of the MURA dataset, keeping the base layer frozen.
+This does an initial training of the top layer. Interestingly, the best results were obtained when fine-tuning was not
+performed. That is, the base model was NOT unfrozen and trained with this dataset.
+model
 ./bone_fracture_detector_trnsfr_dev.py train -i /Users/gstewart/temp/tmpML/datasets/MURA-Humerus
+Then using the target dataset, train the top layer of the model and fine-tune the model and evaluate using k-Fold
+cross validation.
 ./bone_fracture_detector_trnsfr_dev.py eval-w-kfold -i /Users/gstewart/temp/tmpML/datasets/boneXraysKfold
+
+Lastest Results
+Averages after k-Fold Cross Validation
+Average Loss:  0.44 (+/- 0.21)
+Average Accuracy:  84.31% (+/- 14.33%)
+
 """
 
 import matplotlib.pyplot as plt
@@ -83,26 +94,29 @@ def train(options) -> None:
     training_epochs = 15
 
     # this trains the top layer added on top of the base model which currently has its layers frozen
-    model.fit(train_ds, validation_data=val_ds, epochs=training_epochs)
+    #model.fit(train_ds, validation_data=val_ds, epochs=training_epochs)
+    history = model.fit(train_ds, validation_data=val_ds, epochs=training_epochs)
 
     # fine tune the entire model
     # Unfreeze the base_model. Note that it keeps running in inference mode since we passed `training=False` when
     # calling it, as described in the create_model function. This means that the batchnorm layers will not update
     # their batch statistics. This prevents the batchnorm layers from undoing all the training done so far.
-    base_model.trainable = True
-    model.summary()
+
+    #base_model.trainable = True
+    #model.summary()
 
     # Note that a very low learning rate is needed at this step, because a much larger model is being trained now
     # since the base model's layers have been unfrozen, and a tiny dataset is being used. This avoids overfitting
     # by preventing large weight updates. The pre-trained weights need to be re-adapted in a small, incremental way.
-    model.compile(
-        optimizer=keras.optimizers.Adam(1e-5),
-        loss=keras.losses.BinaryCrossentropy(from_logits=True),
-        metrics=[keras.metrics.BinaryAccuracy()],
-    )
 
-    finetuning_epochs = 10
-    history = model.fit(train_ds, epochs=finetuning_epochs, validation_data=val_ds)
+    #model.compile(
+    #    optimizer=keras.optimizers.Adam(1e-5),
+    #    loss=keras.losses.BinaryCrossentropy(from_logits=True),
+    #    metrics=[keras.metrics.BinaryAccuracy()],
+    #)
+
+    #finetuning_epochs = 10
+    # history = model.fit(train_ds, epochs=finetuning_epochs, validation_data=val_ds)
 
     # Persist the weights to enable the kfold evaluation in a separate operation
     model.save_weights(CHECKPOINT_PATH)
@@ -113,7 +127,8 @@ def train(options) -> None:
     loss = history.history['loss']
     val_loss = history.history['val_loss']
 
-    epochs_range = range(finetuning_epochs)
+    #epochs_range = range(finetuning_epochs)
+    epochs_range = range(training_epochs)
 
     plt.figure(figsize=(8, 8))
     plt.subplot(1, 2, 1)
